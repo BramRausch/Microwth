@@ -20,7 +20,7 @@ Adafruit_BME280 bme;
 
 const byte buttonPin[] = {UP,DOWN,LEFT,RIGHT}; // Array of button pins
 byte hour, minute, second;  // Current time
-byte hrs, mins;  // Variables to seperate the current time from the new settings
+int hrs, mins;  // Variables to seperate the current time from the new settings
 unsigned long selectTime =  0;
 unsigned long timer1 =  0;
 int select = 0;
@@ -32,7 +32,7 @@ int lightOff = 0;
 int currentTime = 0;
 float humidity;
 float temp;
-int pumpInt;
+int pumpInt = 0;
 byte pumpTime;
 int pumpSet;
 
@@ -45,14 +45,16 @@ void setup() {
   pinMode(LIGHTS, OUTPUT);
   digitalWrite(LIGHTS, 0);
 
+  beginMotorController();
+  // writeMotorController(0b0001);
+
   // Retrieve settings from EEPROM
-  EEPROM.begin(4);
+  EEPROM.begin(9);
   lightOn = EEPROM.read(0)*60+EEPROM.read(1);
   lightOff = EEPROM.read(2)*60+EEPROM.read(3);
   pumpInt = EEPROM.read(4)*60+EEPROM.read(5);  // Pump interval
   pumpTime = EEPROM.read(6);  // Pump amount
   pumpSet = EEPROM.read(7)*60+EEPROM.read(8);  // Time when the grow was started
-  
 
   // Initialize display
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3C for 128x32
@@ -70,6 +72,7 @@ void setup() {
   // Initialize clock
   initClock();
   readClockTime();
+  currentTime = hour*60+minute;
   checkTriggers();
 }
 
@@ -108,8 +111,18 @@ void loop() {
 
       // Menu navigation options
       if (button(0, 0)) select = 20;  // up
-      if (button(1, 0)) select = 0;  // down
+      if (button(1, 0)) select = 40;  // down
       if (button(3, 0)) select = 220;  // right
+    break;
+    case 40:  // Start grow option text
+      displayText("Pump ", 2);
+
+      // Menu navigation options
+      if (button(0, 0)) select = 30;  // up
+      if (button(1, 0)) select = 0;  // down
+      if (button(3, 1)){
+        toggle = !toggle;
+      }
     break;
     case 210:  // set time
       hrs = hour;
@@ -199,7 +212,6 @@ void loop() {
       mins = pumpInt%60;
       if (setStep == 0){
         setHour(button(0, 1) - button(1, 1));
-        pumpInt = hrs*60+mins;
         displayBinkingTime(hrs, mins, 0);
 
         // Menu navigation options
@@ -207,13 +219,13 @@ void loop() {
         if (button(3, 0)) setStep = 1;  // right
       } else if(setStep == 1){
         setMinute(button(0, 1) - button(1, 1));
-        pumpInt = hrs*60+mins;
-        
         displayBinkingTime(hrs, mins, 1);
 
         // Menu navigation options
         if (button(2, 0)) setStep = 0;  // left
         if (button(3, 0)) {  // right
+          pumpInt = hrs*60+mins;
+          
           setStep = 0;
           select = 250;  
 
@@ -271,74 +283,12 @@ void setMinute(int steps){
     }
   }
   if (steps == -1) {
-    if (minute == 0) {
+    if (mins == 0) {
       mins = 59;
     } else{
       mins--;
     }
   }
-}
-
-void displayText(String text, byte textSize){
-  display.clearDisplay();
-  display.setTextSize(textSize);
-  display.setTextColor(WHITE); // Draw white text
-  display.setCursor((SCREEN_WIDTH - ((text.length() * 6) - 1) * textSize) / 2, 12);  // Center text
-  display.print(text);
-  display.display();
-}
-
-void displayBinkingTime(int hour, int minute, bool select){
-  display.clearDisplay();
-  display.setTextSize(0.5);
-  
-  display.setTextSize(2);
-  display.setCursor((SCREEN_WIDTH - 62) / 2, 12);  // Center text
-  display.setTextColor(WHITE);
-
-  if((millis()-timer1 > 250 && toggle == 0) || (millis()-timer1 > 750 && toggle == 1)){
-    timer1 = millis();
-    toggle = !toggle;
-  }
-
-  if (!select && !toggle){
-    display.setTextColor(BLACK);
-  } else if (!select && toggle){
-    display.setTextColor(WHITE);
-  }
-  print0(hour);
-  display.setTextColor(WHITE);
-  display.print(F(":"));
-  if (select && !toggle){
-    display.setTextColor(BLACK);
-  } else if (select && toggle){
-    display.setTextColor(WHITE);
-  }
-  print0(minute);
-  display.display();
-}
-
-void displayTime(int hour, int minute){
-  display.clearDisplay();
-  display.setTextSize(2);        
-  display.setTextColor(WHITE);  // Draw white text
-  display.setCursor((SCREEN_WIDTH - 62) / 2, 12);  // Center text
-  print0(hour);
-  display.print(F(":"));
-  print0(minute);
-  display.display();
-}
-
-void displayBME280(float temp, float humidity){
-  display.clearDisplay();
-  display.setTextSize(2);        
-  display.setTextColor(WHITE);   // Draw white text
-  display.setCursor((SCREEN_WIDTH - 83) / 2, 12);  // Center text
-  print0(temp);
-  display.print("c ");
-  print0(humidity);
-  display.print("%");
-  display.display();
 }
 
 void checkTriggers(){
@@ -362,25 +312,26 @@ void checkTriggers(){
   // Variables to keep track of the pump
   static bool pumpOn;
   static unsigned long int pumpTimer1;
+  static unsigned long int onTime;
 
   // change to : currentime-settime%interval
-  if ((currentTime - pumpSet) % 1 == 0 && !pumpOn) {  // When an interval is reached from the time the interval has been set
+  if ((currentTime - pumpSet) % pumpInt == 0 && onTime != currentTime && !pumpOn) {  // When an interval is reached from the time the interval has been set
     // turn pump on
     pumpOn = 1;
     pumpTimer1 = millis();
-    Serial.println("pump on");
-  } else if (pumpOn && millis()-pumpTimer1*1000 >= pumpTime) {  // If the pump has been on the set ammount off time
+    onTime = currentTime;
+    writeMotorController(0b1111);
+  } else if (pumpOn && millis()-pumpTimer1 >= pumpTime*1000) {  // If the pump has been on the set ammount off time
     // turn pump off
-    Serial.println("pump off");
-  } else if ((currentTime - pumpSet) % 480 != 0 && millis()-pumpTimer1*1000 && pumpOn){  // If the timer is done and the time has changed reset pumpOn
-    pumpOn = 0;  
+    writeMotorController(0b0);
+    pumpOn = 0;
   }
 }
 
 boolean button(byte k, boolean repeatFlg) { 
-  const  unsigned long debounce  =   50;
-  const  unsigned long interval1 =  500;
-  const  unsigned long interval2 =  100;
+  const unsigned long debounce  =   50;
+  const unsigned long interval1 =  500;
+  const unsigned long interval2 =  100;
 
   static unsigned long buttonTime[sizeof(buttonPin)];
   static boolean       buttonFlg[sizeof(buttonPin)];
@@ -407,38 +358,3 @@ boolean button(byte k, boolean repeatFlg) {
   }
   return(0);
 }
-
-void print0(int i) {  // Function to print leading zero
-  if (i<10) display.print("0");
-  display.print(i);
-}
-
-void initClock() {
-  Wire.beginTransmission(0x68);             // DS3231 device address
-  Wire.write(0x0E);                         // select register 0Eh
-  Wire.write(0b00100000);
-  Wire.endTransmission();
-}
-
-void readClockTime() {                                           // send request to receive data
-  Wire.beginTransmission(0x68);     
-  Wire.write(0x00);                         // start at register 00h
-  Wire.endTransmission();
-  Wire.requestFrom(0x68, 3);                // request 3 bytes (00h t/m 02h)
-  while (Wire.available()<3) ;              // wait for data.. 
-  second = bcd2dec(Wire.read() & 0x7F);     // mask 0111 1111
-  minute = bcd2dec(Wire.read() & 0x7F);     // Convert BCD values to decimal
-  hour   = bcd2dec(Wire.read() & 0x3F);     // mask 0011 1111
-}
-
-void setClockTime() {
-  Wire.beginTransmission(0x68);             // DS3231 device address
-  Wire.write(0x00);                         // select register 00h
-  Wire.write(dec2bcd(second));
-  Wire.write(dec2bcd(minute));
-  Wire.write(dec2bcd(hour));
-  Wire.endTransmission();
-}
-
-byte bcd2dec(byte num)  { return ((num/16 * 10) + num%16); }    // conversion bcd -> decimal
-byte dec2bcd(byte num)  { return ((num/10 * 16) + num%10); }    // conversion decimal  -> bcd
