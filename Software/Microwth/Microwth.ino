@@ -213,6 +213,7 @@ void loop() {
       if (setStep == 0){
         setHour(button(0, 1) - button(1, 1));
         displayBinkingTime(hrs, mins, 0);
+        pumpInt = hrs*60+mins;
 
         // Menu navigation options
         if (button(2, 0)) select = 230;  // left
@@ -220,6 +221,7 @@ void loop() {
       } else if(setStep == 1){
         setMinute(button(0, 1) - button(1, 1));
         displayBinkingTime(hrs, mins, 1);
+        pumpInt = hrs*60+mins;
 
         // Menu navigation options
         if (button(2, 0)) setStep = 0;  // left
